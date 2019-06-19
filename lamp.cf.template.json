@@ -135,6 +135,13 @@
       "Default": "My PHP Application"
     },
 
+    "AppRoot": {
+        "Type": "String",
+        "MinLength": "4",
+        "MaxLength": "128",
+        "Default": "My PHP Application Root Path"
+    },
+
     "AppSource": {
       "Type": "String",
       "Description": ".tar.gz file",
@@ -941,40 +948,83 @@
             "packages" : {
 
               "yum" : {
+                "epel-release"     : [],
                 "mysql"            : [],
-                "httpd"            : [],
+                "mysql-libs"       : [],
+                "nginx"            : [],
                 "php"              : [],
                 "php-mysql"        : []
               }
             },
 
             "sources" : {
-              "/var/www/html" : { "Ref": "AppSource" }
+              "/apps/" : { "Ref": "AppSource" }
             },
 
             "files" : {
-              "/usr/local/share/app/config.tar.gz" : {
+            "/apps/nginx/conf.d/moodle.conf" : {
+                "content" : { "Fn::Join" : [ "", [
+                      "server {\n",
+                        "listen 80;\n",
+                        "client_max_body_size 200M;\n",
+                        "large_client_header_buffers 4 16K;\n",
+                        "server_name  _;\n",
+                        "root /apps/moodle;\n",
+                        "index index.php index.html index.htm;\n",
+                        
+                        "location / {\n",
+                        "try_files $uri $uri/ /index.php$is_args$args;\n",
+                        "}\n",
+                        
+                        "location ~ \\.php$ {\n",
+                        "fastcgi_split_path_info ^(.+\\.php)(/.+)$;\n",
+                        "fastcgi_pass 127.0.0.1:9000;\n",
+                        "fastcgi_index index.php;\n",
+                        "include fastcgi_params;\n",
+                        "fastcgi_param PATH_INFO $fastcgi_path_info;\n",
+                        "fastcgi_param PATH_TRANSLATED $document_root$fastcgi_path_info;\n",
+                        "}\n",
+                        
+                        "location ~* ^\/(css|img|js|flv|swf|download)\/(.+)$ {\n",
+                        "root /apps/moodle;\n",
+                        "}\n",
+                        
+                        "location ~* ^\/(MobileWeb)/(.+)$ {\n",
+                        "root /apps/moodle;\n",
+                        "expires max;\n",
+                        "add_header Cache-Control public;\n",
+                        "}\n",
+                        "location ~ /\\.ht {\n",
+                        "deny all;\n",
+                        "}\n",
+                        "}\n"
+                ]]},
+                "mode"  : "000600",
+                "owner" : "nginx",
+                "group" : "nginx"
+              },
+              "/app/config.tar.gz" : {
                 "source" : { "Ref": "ConfigSource" },
                 "mode"   : "000644",
                 "owner"  : "root",
                 "group"  : "root"
               },
 
-              "/usr/local/share/app/dump.sql" : {
+              "/app/dump.sql" : {
                 "source" : { "Ref": "MySQLDump" },
                 "mode"   : "000644",
                 "owner"  : "root",
                 "group"  : "root"
               },
 
-              "/usr/local/share/app/beforeinstall.sh" : {
+              "/app/beforeinstall.sh" : {
                 "source" : { "Ref": "BeforeInstall" },
                 "mode"   : "000644",
                 "owner"  : "root",
                 "group"  : "root"
               },
 
-              "/usr/local/share/app/afterinstall.sh" : {
+              "/app/afterinstall.sh" : {
                 "source" : { "Ref": "AfterInstall" },
                 "mode"   : "000644",
                 "owner"  : "root",
@@ -1008,7 +1058,7 @@
 
             "services" : {
               "sysvinit" : {
-                "httpd" : {
+                "nginx" : {
                   "enabled" : "true",
                   "ensureRunning" : "true"
                 },
@@ -1023,16 +1073,17 @@
             "commands" : {
 
               "00 before install script (init)" : {
-                "command" : "sh /usr/local/share/app/beforeinstall.sh",
+                "command" : "sh /app/beforeinstall.sh",
                 "env" : {
-                    "X_MYSQL_DUMP"        : "/usr/local/share/app/dump.sql",
-                    "X_WORK_DIR"          : "/usr/local/share/app",
-                    "X_WWW_PATH"          : "/var/www/html",
+                    "X_MYSQL_DUMP"        : "/apps/moodle.sql",
+                    "X_WORK_DIR"          : "/apps",
+                    "X_WWW_PATH"          : "/apps/",
                     "X_DATABASE_NAME"     : { "Ref" : "DBName" },
                     "X_DATABASE_USER"     : { "Ref" : "DBUser" },
                     "X_DATABASE_PASS"     : { "Ref" : "DBPassword" },
                     "X_DATABASE_URI"      : { "Fn::GetAtt" : [ "MySQLDatabase", "Endpoint.Address" ] },
                     "X_APPLICATION_NAME"  : { "Ref" : "AppName" },
+                    "X_APPLICATION_ROOT_PATH"  : { "Ref" : "AppRoot" },
                     "X_ELB_HOSTNAME"      : { "Fn::GetAtt" : [ "ApplicationLoadBalancer", "DNSName" ] },
                     "X_ADMIN_EMAIL"       : { "Ref" : "OpsEmail" },
                     "X_ADMIN_USERNAME"    : { "Ref" : "LoginUsername" },
@@ -1048,24 +1099,24 @@
                   "\";'", " | awk '{print $1}' | tail -1);",
                   " if [ ${count} -eq 0 ]; then",
                   " mysql", " -h", { "Fn::GetAtt": [ "MySQLDatabase", "Endpoint.Address" ] },
-                  " -u", { "Ref": "DBUser" }, " -p", { "Ref": "DBPassword" }," ", { "Ref": "DBName" }," < /usr/local/share/app/dump.sql;",
+                  " -u", { "Ref": "DBUser" }, " -p", { "Ref": "DBPassword" }," ", { "Ref": "DBName" }," < /app/dump.sql;",
                   " fi"
                 ]]}
               },
 
               "02 copying config files" : {
-                "command" : "tar xf /usr/local/share/app/config.tar.gz -C /var/www/html --strip 1"
+                "command" : "tar -zxvf /app/moodle.tar.gz -C /apps/ --strip 1"
               },
 
               "03 changing directory owner to apache" : {
-                "command" : "chown -R apache:apache /var/www/html"
+                "command" : "chown -R nginx:nginx /apps/moodle"
               },
 
               "04 after install script" : {
-                "command" : "sh /usr/local/share/app/afterinstall.sh",
+                "command" : "sh /app/afterinstall.sh",
                 "env" : {
-                    "X_MYSQL_DUMP"        : "/usr/local/share/app/dump.sql",
-                    "X_WORK_DIR"          : "/usr/local/share/app",
+                    "X_MYSQL_DUMP"        : "/app/dump.sql",
+                    "X_WORK_DIR"          : "/app",
                     "X_WWW_PATH"          : "/var/www/html",
                     "X_DATABASE_NAME"     : { "Ref" : "DBName" },
                     "X_DATABASE_USER"     : { "Ref" : "DBUser" },
